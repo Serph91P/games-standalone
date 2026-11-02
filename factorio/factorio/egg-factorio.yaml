@@ -1,7 +1,7 @@
 _comment: 'DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PANEL'
 meta:
   version: PLCN_v3
-  update_url: 'https://raw.githubusercontent.com/pelican-eggs/games-standalone/refs/heads/main/factorio/factorio/egg-factorio.yaml'
+  update_url: 'https://raw.githubusercontent.com/Serph91P/games-standalone/refs/heads/feat/1-factorio-startup-update/factorio/factorio/egg-factorio.yaml'
 exported_at: '2026-01-11T12:51:36+00:00'
 name: Factorio
 author: parker@parkervcp.com
@@ -15,7 +15,47 @@ docker_images:
   'ghcr.io/parkervcp/yolks:debian': 'ghcr.io/parkervcp/yolks:debian'
 file_denylist: {  }
 startup_commands:
-  Default: '[ ! -f "./saves/{{SAVE_NAME}}.zip" ] && ./bin/x64/factorio --create ./saves/{{SAVE_NAME}}.zip --map-gen-settings data/map-gen-settings.json --map-settings data/map-settings.json; ./bin/x64/factorio --port {{SERVER_PORT}} --server-settings data/server-settings.json --start-server saves/{{SAVE_NAME}}.zip $( [ "$RCON_ENABLED" = "1" ] && echo "--rcon-port {{RCON_PORT}} --rcon-password {{RCON_PASSWORD}}" )'
+  Default: >-
+    bash -c 'set -euo pipefail;
+    if [ "${AUTO_UPDATE:-0}" != "1" ]; then exit 0; fi;
+    selected="${FACTORIO_VERSION:-latest}";
+    case "$selected" in latest|stable) channel=stable;; experimental) channel=experimental;; *) channel=;; esac;
+    if [ -n "$channel" ]; then
+    releases=$(curl --fail --location --silent --show-error --connect-timeout 15 --max-time 60 https://factorio.com/api/latest-releases);
+    selected=$(printf "%s" "$releases" | tr -d "[:space:]" | sed -nE "s/.*\"${channel}\":\{[^}]*\"headless\":\"([0-9]+[.][0-9]+[.][0-9]+)\".*/\1/p");
+    fi;
+    if [[ ! "$selected" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+    echo "Factorio update: invalid or unavailable version" >&2; exit 1; fi;
+    installed=$(./bin/x64/factorio --version 2>/dev/null | sed -nE "s/^Version: ([0-9]+[.][0-9]+[.][0-9]+).*/\1/p") || installed=;
+    if [ "$installed" = "$selected" ]; then echo "Factorio update: already at $selected"; exit 0; fi;
+    echo "Factorio update: installing $selected (installed: ${installed:-missing})";
+    stage=$(mktemp -d .factorio-update.XXXXXX);
+    old_bin=0; old_data=0; new_bin=0; new_data=0; committed=0;
+    cleanup() { code=$?; trap - EXIT;
+    if [ "$committed" != "1" ]; then
+    if [ "$new_bin" = "1" ]; then rm -rf bin; fi;
+    if [ "$new_data" = "1" ]; then rm -rf data; fi;
+    if [ "$old_bin" = "1" ] && ! mv "$stage/old-bin" bin; then echo "Factorio update: restore bin manually from $stage/old-bin" >&2; exit 1; fi;
+    if [ "$old_data" = "1" ] && ! mv "$stage/old-data" data; then echo "Factorio update: restore data manually from $stage/old-data" >&2; exit 1; fi;
+    fi; rm -rf "$stage"; exit "$code"; };
+    trap cleanup EXIT; trap "exit 130" INT; trap "exit 143" TERM;
+    curl --fail --location --silent --show-error --connect-timeout 15 --max-time 300 --retry 2
+    "https://factorio.com/get-download/$selected/headless/linux64" --output "$stage/download.tar.xz";
+    tar -xf "$stage/download.tar.xz" -C "$stage";
+    candidate=$("$stage/factorio/bin/x64/factorio" --version | sed -nE "s/^Version: ([0-9]+[.][0-9]+[.][0-9]+).*/\1/p");
+    if [ "$candidate" != "$selected" ] || [ ! -d "$stage/factorio/data" ]; then
+    echo "Factorio update: downloaded files do not match $selected" >&2; exit 1; fi;
+    if [ -L bin ] || [ -L data ]; then echo "Factorio update: symlinked bin/data directories are unsupported" >&2; exit 1; fi;
+    for config in server-settings.json map-gen-settings.json map-settings.json; do
+    if [ -f "data/$config" ]; then cp -p "data/$config" "$stage/factorio/data/$config"; fi; done;
+    if [ -e bin ]; then mv bin "$stage/old-bin"; old_bin=1; fi;
+    if [ -e data ]; then mv data "$stage/old-data"; old_data=1; fi;
+    mv "$stage/factorio/bin" bin; new_bin=1;
+    mv "$stage/factorio/data" data; new_data=1;
+    committed=1; echo "Factorio update: installed $selected";
+    ' && {
+    [ ! -f "./saves/{{SAVE_NAME}}.zip" ] && ./bin/x64/factorio --create ./saves/{{SAVE_NAME}}.zip --map-gen-settings data/map-gen-settings.json --map-settings data/map-settings.json;
+    ./bin/x64/factorio --port {{SERVER_PORT}} --server-settings data/server-settings.json --start-server saves/{{SAVE_NAME}}.zip $( [ "$RCON_ENABLED" = "1" ] && echo "--rcon-port {{RCON_PORT}} --rcon-password {{RCON_PASSWORD}}" ); }
 config:
   files:
     data/server-settings.json:
@@ -105,6 +145,17 @@ scripts:
     container: 'ghcr.io/parkervcp/installers:debian'
     entrypoint: bash
 variables:
+  -
+    name: 'Update on Start'
+    description: 'Set to 1 to update Factorio to the selected Factorio Version before starting. Set to 0 to keep installed files. Updates can affect save and mod compatibility; keep backups. An update error prevents startup.'
+    env_variable: AUTO_UPDATE
+    default_value: '0'
+    user_viewable: true
+    user_editable: true
+    rules:
+      - required
+      - boolean
+    sort: 15
   -
     name: 'AFK Kick'
     description: "Time specified in minutes to kick AFK players.\r\n0 is off"
