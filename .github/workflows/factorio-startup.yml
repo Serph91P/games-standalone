@@ -1,0 +1,32 @@
+name: Factorio startup update
+
+on:
+  push:
+    paths:
+      - factorio/factorio/**
+      - .github/workflows/factorio-startup.yml
+  pull_request:
+    paths:
+      - factorio/factorio/**
+      - .github/workflows/factorio-startup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Pull unchanged runtime and panel test images
+        run: |
+          docker pull ghcr.io/parkervcp/yolks:debian
+          docker pull ghcr.io/pelican/panel:v1.0.0-rc.2
+      - name: Native Pelican import and unprivileged startup tests
+        run: python factorio/factorio/test_startup.py
